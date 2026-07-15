@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/devkit/devkit/internal/config"
+	"github.com/devkit/devkit/internal/contract"
 	"github.com/devkit/devkit/internal/dbcmd"
 	"github.com/devkit/devkit/internal/detect"
 	"github.com/devkit/devkit/internal/env"
@@ -12,6 +13,8 @@ import (
 	"github.com/devkit/devkit/internal/logs"
 	"github.com/devkit/devkit/internal/migrate"
 	"github.com/devkit/devkit/internal/newcmd"
+	"github.com/devkit/devkit/internal/qa"
+	"github.com/devkit/devkit/internal/review"
 	"github.com/devkit/devkit/internal/seed"
 	"github.com/devkit/devkit/internal/servcmd"
 	"github.com/devkit/devkit/internal/start"
@@ -21,7 +24,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var version = "0.4.0"
+var version = "0.5.0"
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -41,6 +44,9 @@ func main() {
 	rootCmd.AddCommand(servcmd.NewServeCommand())
 	rootCmd.AddCommand(initcmd.NewInitCommand())
 	rootCmd.AddCommand(newcmd.NewNewCommand())
+	rootCmd.AddCommand(contract.NewContractCommand())
+	rootCmd.AddCommand(qa.NewQACommand())
+	rootCmd.AddCommand(review.NewReviewCommand())
 	rootCmd.AddCommand(start.NewUpCommand())
 	rootCmd.AddCommand(stop.NewStopCommand())
 	rootCmd.AddCommand(testcmd.NewTestCommand())
