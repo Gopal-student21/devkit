@@ -9,6 +9,7 @@ import (
 	"github.com/devkit/devkit/internal/dbcmd"
 	"github.com/devkit/devkit/internal/detect"
 	"github.com/devkit/devkit/internal/env"
+	"github.com/devkit/devkit/internal/errview"
 	"github.com/devkit/devkit/internal/initcmd"
 	"github.com/devkit/devkit/internal/logs"
 	"github.com/devkit/devkit/internal/migrate"
@@ -24,7 +25,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var version = "0.5.0"
+var version = "0.6.0"
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -56,6 +57,7 @@ func main() {
 	rootCmd.AddCommand(migrate.NewMigrateCommand())
 	rootCmd.AddCommand(seed.NewSeedCommand())
 	rootCmd.AddCommand(dbcmd.NewDBCommand())
+	rootCmd.AddCommand(errview.NewErrviewCommand())
 	config.Register(rootCmd)
 	detect.Register(rootCmd)
 
