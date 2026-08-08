@@ -22,10 +22,11 @@ import (
 	"github.com/devkit/devkit/internal/status"
 	"github.com/devkit/devkit/internal/stop"
 	"github.com/devkit/devkit/internal/testcmd"
+	"github.com/devkit/devkit/internal/verify"
 	"github.com/spf13/cobra"
 )
 
-var version = "0.6.1"
+var version = "0.7.0"
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -48,6 +49,7 @@ func main() {
 	rootCmd.AddCommand(contract.NewContractCommand())
 	rootCmd.AddCommand(qa.NewQACommand())
 	rootCmd.AddCommand(review.NewReviewCommand())
+	rootCmd.AddCommand(verify.NewVerifyCommand())
 	rootCmd.AddCommand(start.NewUpCommand())
 	rootCmd.AddCommand(stop.NewStopCommand())
 	rootCmd.AddCommand(testcmd.NewTestCommand())
