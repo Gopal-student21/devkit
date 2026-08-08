@@ -52,6 +52,8 @@ Requires Go 1.23+
 | `dev contract init` | Create API contract (OpenAPI 3.0) |
 | `dev contract test` | Test API matches contract |
 | `dev contract mock` | Start mock server |
+| `dev contract types` | Generate TypeScript types from contract |
+| `dev contract validate` | Validate contract file |
 
 ### Tools
 | Command | Description |
@@ -119,6 +121,23 @@ go build ./... 2>&1 | dev errview
 # Stop everything
 dev stop
 ```
+
+## Changelog
+
+### v0.6.1 (2026-08-08)
+- **Fixed** `contract types` generating empty interfaces — now emits real TypeScript from `components.schemas` (optionals via `required`, enums, `anyOf` unions, arrays, nested objects, `$ref` resolution)
+- **Fixed** `contract mock` server crash (`%!d(MISSING)` port) — mock now resolves `$ref` schemas and generates realistic values (email, date-time, URLs)
+- **Fixed** mock array/object responses returning `{}`
+
+### v0.6.0 (2026-07)
+- `errview` — visual error viewer for any language
+- API contract testing, QA automation, code review
+
+### v0.5.0
+- API contract testing, QA automation, code review
+
+### v0.4.0
+- Universal CLI Dashboard
 
 ## License
 
