@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 
 	"github.com/devkit/devkit/pkg/logger"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 type APISpec struct {
@@ -273,19 +275,51 @@ const yaml = require('js-yaml');
 const spec = yaml.load(fs.readFileSync('api.yaml', 'utf8'));
 const PORT = %d;
 
-function generateMockResponse(schema) {
+function resolveRef(schema) {
+  if (!schema || typeof schema.$ref !== 'string') return schema;
+  const parts = schema.$ref.split('/');
+  const name = parts[parts.length - 1];
+  return spec.components?.schemas?.[name] || schema;
+}
+
+function generateMockValue(prop, seen) {
+  if (!prop) return null;
+  prop = resolveRef(prop);
+  seen = seen || [];
+  if (prop.enum && prop.enum.length) return prop.enum[0];
+  if (prop.type === 'string') {
+    if (prop.format === 'email') return 'test@example.com';
+    if (prop.format === 'date-time') return new Date().toISOString();
+    if (prop.format === 'url' || prop.format === 'uri') return 'https://example.com';
+    return 'mock-value';
+  }
+  if (prop.type === 'number' || prop.type === 'integer') return 42;
+  if (prop.type === 'boolean') return true;
+  if (prop.type === 'array') {
+    const item = generateMockValue(prop.items, seen);
+    return [item].filter((v) => v !== null);
+  }
+  if (prop.type === 'object') return generateMockResponse(prop, seen);
+  return null;
+}
+
+function generateMockResponse(schema, seen) {
   if (!schema) return {};
+  schema = resolveRef(schema);
+  const name = schema.$ref ? schema.$ref.split('/').pop() : schema.title;
+  if (seen && name && seen.includes(name)) return {};
   if (schema.type === 'object' && schema.properties) {
     const obj = {};
+    const nextSeen = (seen || []).concat(name ? [name] : []);
     for (const [key, prop] of Object.entries(schema.properties)) {
-      if (prop.type === 'string') obj[key] = prop.format === 'email' ? 'test@example.com' : 'mock-value';
-      else if (prop.type === 'number') obj[key] = 42;
-      else if (prop.type === 'boolean') obj[key] = true;
-      else if (prop.type === 'array') obj[key] = [];
+      obj[key] = generateMockValue(prop, nextSeen);
     }
     return obj;
   }
-  return {};
+  if (schema.type === 'array') {
+    return [generateMockResponse(schema.items, seen)].filter((v) => v && Object.keys(v).length > 0);
+  }
+  return generateMockValue(schema, seen) || {};
 }
 
 const server = http.createServer((req, res) => {
@@ -321,7 +355,7 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, () => {
   console.log('Mock server running on http://localhost:' + PORT);
 });
-`)
+`, port)
 
 	os.WriteFile("mock-server.js", []byte(mockCode), 0644)
 
@@ -347,83 +381,153 @@ func newTypesCommand() *cobra.Command {
 
 			logger.Header("Generating TypeScript Types")
 
-			data, _ := os.ReadFile("api.yaml")
-			content := string(data)
+			data, err := os.ReadFile("api.yaml")
+			if err != nil {
+				logger.Error("Failed to read api.yaml")
+				return
+			}
 
-			types := "// Auto-generated from api.yaml\n// Do not edit manually\n\n"
+			var spec struct {
+				Components struct {
+					Schemas map[string]map[string]interface{} `yaml:"schemas"`
+				} `yaml:"components"`
+			}
+			if err := yaml.Unmarshal(data, &spec); err != nil {
+				logger.Error("Failed to parse api.yaml: " + err.Error())
+				return
+			}
 
-			// Parse schemas and generate types
-			inSchema := false
-			schemaName := ""
-			properties := map[string]string{}
+			if len(spec.Components.Schemas) == 0 {
+				logger.Warn("No schemas found under components.schemas")
+			}
 
-			for _, line := range strings.Split(content, "\n") {
-				trimmed := strings.TrimSpace(line)
-
-				if strings.HasPrefix(line, "    ") && strings.HasSuffix(trimmed, ":") && !strings.HasPrefix(trimmed, "type:") && !strings.HasPrefix(trimmed, "required:") && !strings.HasPrefix(trimmed, "properties:") {
-					if inSchema && schemaName != "" {
-						types += fmt.Sprintf("export interface %s {\n", schemaName)
-						for k, v := range properties {
-							types += fmt.Sprintf("  %s: %s;\n", k, v)
+			requiredFields := map[string]map[string]bool{}
+			for name, schema := range spec.Components.Schemas {
+				req := map[string]bool{}
+				if required, ok := schema["required"].([]interface{}); ok {
+					for _, r := range required {
+						if s, ok := r.(string); ok {
+							req[s] = true
 						}
-						types += "}\n\n"
-					}
-					schemaName = trimmed[:len(trimmed)-1]
-					properties = map[string]string{}
-					inSchema = true
-				}
-
-				if inSchema && strings.Contains(line, "type: string") {
-					key := getPreviousKey(line)
-					if key != "" {
-						properties[key] = "string"
 					}
 				}
-				if inSchema && strings.Contains(line, "type: number") {
-					key := getPreviousKey(line)
-					if key != "" {
-						properties[key] = "number"
-					}
-				}
-				if inSchema && strings.Contains(line, "type: boolean") {
-					key := getPreviousKey(line)
-					if key != "" {
-						properties[key] = "boolean"
-					}
-				}
-				if inSchema && strings.Contains(line, "type: array") {
-					key := getPreviousKey(line)
-					if key != "" {
-						properties[key] = "any[]"
-					}
-				}
+				requiredFields[name] = req
 			}
 
-			if inSchema && schemaName != "" {
-				types += fmt.Sprintf("export interface %s {\n", schemaName)
-				for k, v := range properties {
-					types += fmt.Sprintf("  %s: %s;\n", k, v)
+			names := sortedKeys(spec.Components.Schemas)
+
+			var b strings.Builder
+			b.WriteString("// Auto-generated from api.yaml\n// Do not edit manually\n\n")
+
+			for _, name := range names {
+				schema := spec.Components.Schemas[name]
+				props, _ := schema["properties"].(map[string]interface{})
+
+				b.WriteString(fmt.Sprintf("export interface %s {\n", name))
+				if len(props) == 0 {
+					b.WriteString("  [key: string]: unknown;\n")
 				}
-				types += "}\n\n"
+				for _, key := range sortedKeys(props) {
+					prop, _ := props[key].(map[string]interface{})
+					opt := ""
+					if !requiredFields[name][key] {
+						opt = "?"
+					}
+					b.WriteString(fmt.Sprintf("  %s%s: %s;\n", key, opt, contractToTS(prop)))
+				}
+				b.WriteString("}\n\n")
 			}
 
-			os.WriteFile("types.ts", []byte(types), 0644)
+			os.WriteFile("types.ts", []byte(b.String()), 0644)
 			logger.Success("Generated types.ts")
 		},
 	}
 }
 
-func getPreviousKey(line string) string {
-	parts := strings.Split(line, "type:")
-	if len(parts) > 0 {
-		// Look for key in previous context
-		trimmed := strings.TrimSpace(parts[0])
-		if trimmed == "" {
-			// Check if it's indented under a property
-			return ""
-		}
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
 	}
-	return ""
+	sort.Strings(keys)
+	return keys
+}
+
+func contractToTS(prop map[string]interface{}) string {
+	if prop == nil {
+		return "unknown"
+	}
+
+	if ref, ok := prop["$ref"].(string); ok {
+		return tsRefName(ref)
+	}
+
+	if refs, ok := prop["anyOf"].([]interface{}); ok && len(refs) > 0 {
+		parts := make([]string, 0, len(refs))
+		for _, r := range refs {
+			if m, ok := r.(map[string]interface{}); ok {
+				parts = append(parts, contractToTS(m))
+			}
+		}
+		return strings.Join(parts, " | ")
+	}
+
+	t, _ := prop["type"].(string)
+	switch t {
+	case "string":
+		if enums, ok := prop["enum"].([]interface{}); ok && len(enums) > 0 {
+			parts := make([]string, 0, len(enums))
+			for _, e := range enums {
+				parts = append(parts, fmt.Sprintf("%q", fmt.Sprint(e)))
+			}
+			return strings.Join(parts, " | ")
+		}
+		return "string"
+	case "number", "integer":
+		return "number"
+	case "boolean":
+		return "boolean"
+	case "array":
+		items, _ := prop["items"].(map[string]interface{})
+		inner := contractToTS(items)
+		if strings.HasPrefix(inner, "{ ") || strings.Contains(inner, "|") {
+			return "Array<" + inner + ">"
+		}
+		return inner + "[]"
+	case "object":
+		if props, ok := prop["properties"].(map[string]interface{}); ok && len(props) > 0 {
+			required := map[string]bool{}
+			if req, ok := prop["required"].([]interface{}); ok {
+				for _, r := range req {
+					if s, ok := r.(string); ok {
+						required[s] = true
+					}
+				}
+			}
+			var inner strings.Builder
+			inner.WriteString("{ ")
+			for _, key := range sortedKeys(props) {
+				p, _ := props[key].(map[string]interface{})
+				opt := ""
+				if !required[key] {
+					opt = "?"
+				}
+				inner.WriteString(fmt.Sprintf("%s%s: %s; ", key, opt, contractToTS(p)))
+			}
+			inner.WriteString("}")
+			return inner.String()
+		}
+		return "Record<string, unknown>"
+	default:
+		return "unknown"
+	}
+}
+
+func tsRefName(ref string) string {
+	if idx := strings.LastIndex(ref, "/"); idx >= 0 {
+		return ref[idx+1:]
+	}
+	return ref
 }
 
 func newValidateCommand() *cobra.Command {
