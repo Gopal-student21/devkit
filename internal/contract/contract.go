@@ -24,10 +24,11 @@ func NewContractCommand() *cobra.Command {
 		Short: "API contract testing tools",
 		Long: `Manage API contracts between frontend and backend:
   dev contract init     — Create API contract file
-  dev contract test     — Test API matches contract
+  dev contract test     — Test API matches contract (schema validation)
   dev contract mock     — Start mock server
   dev contract types    — Generate TypeScript types
-  dev contract validate — Validate contract file`,
+  dev contract validate — Validate contract file
+  dev contract seed     — Generate FK-aware mock seed data`,
 	}
 
 	cmd.AddCommand(newInitCommand())
@@ -35,6 +36,7 @@ func NewContractCommand() *cobra.Command {
 	cmd.AddCommand(newMockCommand())
 	cmd.AddCommand(newTypesCommand())
 	cmd.AddCommand(newValidateCommand())
+	cmd.AddCommand(newSeedCommand())
 
 	return cmd
 }
@@ -154,86 +156,28 @@ components:
 
 func newTestCommand() *cobra.Command {
 	var baseURL string
+	var strict bool
 	cmd := &cobra.Command{
 		Use:   "test",
-		Short: "Test API matches contract",
+		Short: "Test API matches contract (schema validation)",
 		Run: func(cmd *cobra.Command, args []string) {
 			if _, err := os.Stat("api.yaml"); err != nil {
 				logger.Error("No api.yaml found. Run: dev contract init")
-				return
+				os.Exit(1)
 			}
-
 			if baseURL == "" {
 				baseURL = "http://localhost:3000"
 			}
-
-			logger.Header("Testing API Contract")
-			logger.Step(fmt.Sprintf("Base URL: %s", baseURL))
-			logger.Step("Contract: api.yaml")
-			logger.Print("")
-
-			// Parse the contract and test endpoints
-			testAPIContract(baseURL)
+			runContractTest(baseURL, strict)
 		},
 	}
 	cmd.Flags().StringVar(&baseURL, "url", "http://localhost:3000", "API base URL")
+	cmd.Flags().BoolVar(&strict, "strict", false, "Treat extra fields as failures (exit 1)")
 	return cmd
 }
 
 func testAPIContract(baseURL string) {
-	data, err := os.ReadFile("api.yaml")
-	if err != nil {
-		logger.Error("Failed to read api.yaml")
-		return
-	}
-
-	content := string(data)
-	passed := 0
-	failed := 0
-
-	// Simple parsing - find endpoints and test them
-	lines := strings.Split(content, "\n")
-	currentPath := ""
-	currentMethod := ""
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-
-		if strings.HasPrefix(line, "/") && strings.HasSuffix(line, ":") {
-			currentPath = strings.TrimSuffix(line, ":")
-		}
-
-		if line == "get:" || line == "post:" || line == "put:" || line == "delete:" {
-			currentMethod = strings.TrimSuffix(line, ":")
-		}
-
-		if currentPath != "" && currentMethod != "" {
-			url := baseURL + currentPath
-			logger.Step(fmt.Sprintf("Testing %s %s", strings.ToUpper(currentMethod), currentPath))
-
-			cmd := exec.Command("curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-X", strings.ToUpper(currentMethod), url)
-			output, err := cmd.CombinedOutput()
-
-			statusCode := strings.TrimSpace(string(output))
-			if err != nil || (statusCode != "200" && statusCode != "201" && statusCode != "404") {
-				logger.Error(fmt.Sprintf("  Failed: HTTP %s", statusCode))
-				failed++
-			} else {
-				logger.Success(fmt.Sprintf("  Passed: HTTP %s", statusCode))
-				passed++
-			}
-
-			currentPath = ""
-			currentMethod = ""
-		}
-	}
-
-	logger.Print("")
-	logger.Header("Results")
-	logger.Success(fmt.Sprintf("%d passed", passed))
-	if failed > 0 {
-		logger.Error(fmt.Sprintf("%d failed", failed))
-	}
+	_ = baseURL
 }
 
 func newMockCommand() *cobra.Command {
