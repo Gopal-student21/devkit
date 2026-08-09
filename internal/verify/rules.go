@@ -67,7 +67,7 @@ var Rules = []Rule{
 		Name:       "xss-innerhtml",
 		Category:   "security",
 		Severity:   "high",
-		Regex:      `\.innerHTML\s*=` ,
+		Regex:      `\.innerHTML\s*=`,
 		Suggestion: "Use textContent or a safe DOM API to avoid XSS",
 	},
 	{

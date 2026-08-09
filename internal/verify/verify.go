@@ -8,7 +8,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/devkit/devkit/internal/detect"
 	"github.com/devkit/devkit/pkg/logger"
 	"github.com/spf13/cobra"
 )
@@ -27,25 +29,30 @@ type Finding struct {
 
 // FileReport groups findings per file.
 type FileReport struct {
-	File      string     `json:"file"`
-	Findings  []Finding  `json:"findings"`
-	LineCount int        `json:"lines"`
+	File      string    `json:"file"`
+	Findings  []Finding `json:"findings"`
+	LineCount int       `json:"lines"`
 }
 
 // Report is the full verification output.
 type Report struct {
-	Mode          string       `json:"mode"`
-	Files         []FileReport `json:"files"`
-	Total         int          `json:"totalFindings"`
-	High          int          `json:"high"`
-	Medium        int          `json:"medium"`
-	Low           int          `json:"low"`
-	AIMarkers     int          `json:"aiMarkers"`
-	AIlikelihood  string       `json:"aiLikelihood"`
-	RiskScore     int          `json:"riskScore"`
-	Risk          string       `json:"risk"`
-	Verdict       string       `json:"verdict"`
-	Strict        bool         `json:"strict"`
+	Mode         string                 `json:"mode"`
+	Files        []FileReport           `json:"files"`
+	Total        int                    `json:"totalFindings"`
+	High         int                    `json:"high"`
+	Medium       int                    `json:"medium"`
+	Low          int                    `json:"low"`
+	AIMarkers    int                    `json:"aiMarkers"`
+	AIlikelihood string                 `json:"aiLikelihood"`
+	RiskScore    int                    `json:"riskScore"`
+	Risk         string                 `json:"risk"`
+	Verdict      string                 `json:"verdict"`
+	Strict       bool                   `json:"strict"`
+	Attribution  map[string]attribution `json:"attribution,omitempty"`
+	AiLines      int                    `json:"aiLines"`
+	AiTotal      int                    `json:"aiTotal"`
+	AiSignal     string                 `json:"aiSignal"`
+	Tests        TestResult             `json:"tests,omitempty"`
 }
 
 const (
@@ -60,6 +67,9 @@ func NewVerifyCommand() *cobra.Command {
 	var file string
 	var strict bool
 	var ci bool
+	var runTestsFlag bool
+	var htmlOut string
+	var openHTML bool
 
 	cmd := &cobra.Command{
 		Use:   "verify [path]",
@@ -70,6 +80,9 @@ and AI-author attribution with a visual risk report.
   dev verify           — verify staged changes (default)
   dev verify --all     — verify all uncommitted changes
   dev verify --file x  — verify a specific file
+  dev verify --tests   — also run the project test suite (verify before merge)
+  dev verify --html r  — write a visual HTML report
+  dev verify --open    — write and open the HTML report in your browser
   dev verify --ci      — machine-readable JSON, exit 1 on issues (CI gate)
   dev verify --strict  — fail on any finding (not just high severity)`,
 		Args: cobra.ArbitraryArgs,
@@ -83,6 +96,30 @@ and AI-author attribution with a visual risk report.
 				report = verifyDiff(runGit("git", "diff"), "uncommitted", strict)
 			default:
 				report = verifyDiff(runGit("git", "diff", "--cached"), "staged", strict)
+			}
+
+			if runTestsFlag {
+				stack := detect.DetectStack()
+				report.Tests = runTests(stack.Type, 90*time.Second)
+				finalizeVerdict(&report)
+			}
+
+			if htmlOut != "" || openHTML {
+				path := htmlOut
+				if path == "" {
+					path = "verify-report.html"
+				}
+				var err error
+				if openHTML {
+					err = OpenHTML(report, path)
+				} else {
+					err = WriteHTML(report, path)
+				}
+				if err != nil {
+					logger.Error(fmt.Sprintf("Could not write report: %v", err))
+				} else {
+					logger.Success(fmt.Sprintf("Visual report: %s", path))
+				}
 			}
 
 			if ci {
@@ -105,6 +142,9 @@ and AI-author attribution with a visual risk report.
 	cmd.Flags().StringVar(&file, "file", "", "Verify a specific file")
 	cmd.Flags().BoolVar(&strict, "strict", false, "Exit non-zero on any finding")
 	cmd.Flags().BoolVar(&ci, "ci", false, "JSON output for CI pipelines")
+	cmd.Flags().BoolVar(&runTestsFlag, "tests", false, "Run the project test suite as part of verification")
+	cmd.Flags().StringVar(&htmlOut, "html", "", "Write a visual HTML report to this path")
+	cmd.Flags().BoolVar(&openHTML, "open", false, "Write and open the visual HTML report")
 
 	return cmd
 }
@@ -194,15 +234,33 @@ func analyze(mode string, files map[string]fileContent, strict bool) Report {
 	report.Risk = riskLabel(report.RiskScore)
 	report.AIlikelihood = aiLabel(report.AIMarkers, report.Total)
 
-	if report.High > 0 {
-		report.Verdict = "BLOCK"
-	} else if report.Total > 0 {
-		report.Verdict = "ACTION NEEDED"
-	} else {
-		report.Verdict = "PASS"
-	}
+	perFile := scoreAttribution(files)
+	agg := averageAttribution(perFile)
+	report.Attribution = perFile
+	report.AiLines = agg.AiLines
+	report.AiTotal = agg.Total
+	report.AiSignal = agg.Label
+
+	finalizeVerdict(&report)
 
 	return report
+}
+
+// finalizeVerdict derives the gate verdict from findings + test results.
+func finalizeVerdict(r *Report) {
+	if r.High > 0 {
+		r.Verdict = "BLOCK"
+		return
+	}
+	if r.Tests.Ran && !r.Tests.Passed {
+		r.Verdict = "BLOCK"
+		return
+	}
+	if r.Total > 0 {
+		r.Verdict = "ACTION NEEDED"
+		return
+	}
+	r.Verdict = "PASS"
 }
 
 func riskLabel(score int) string {
