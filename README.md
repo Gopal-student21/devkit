@@ -2,6 +2,14 @@
 
 Turn any CLI tool into a visual dashboard. Manage dev services, scaffold projects, view errors visually, and more — all from one CLI.
 
+## Dashboard
+
+`dev serve` opens the DevKit web dashboard at `http://localhost:8080` — a visual
+control center for every DevKit tool: service status, project commands, and live
+output in one dark-themed UI.
+
+![DevKit Dashboard](docs/devkit-dashboard.png)
+
 ## Install
 
 ```bash
