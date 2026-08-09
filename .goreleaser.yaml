@@ -29,6 +29,16 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+brews:
+  - name: devkit
+    homepage: "https://github.com/gopal-student21/devkit"
+    description: "DevKit — Universal CLI Dashboard + verification layer for AI-generated code (contract testing, mock server, verify-before-merge)"
+    license: "MIT"
+    repository:
+      owner: gopal-student21
+      name: homebrew-tap
+      token: "{{ .Env.GITHUB_TOKEN }}"
+
 changelog:
   sort: asc
   filters:
